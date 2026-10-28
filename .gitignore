@@ -9,3 +9,6 @@ dist/
 /local/
 *.har
 !/fixtures/**/*.har
+
+# Generated Python package metadata
+*.egg-info/
