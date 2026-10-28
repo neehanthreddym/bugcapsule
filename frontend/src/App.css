@@ -1,0 +1,73 @@
+.shell {
+  width: 100%;
+  max-width: 44rem;
+  margin: 0 auto;
+  padding: clamp(1.25rem, 5vw, 3rem);
+}
+
+.page-header {
+  margin-bottom: 2rem;
+}
+
+.page-header h1 {
+  margin: 0 0 0.5rem;
+  font-size: clamp(2rem, 6vw, 3rem);
+  line-height: 1.15;
+}
+
+.page-header p {
+  margin: 0;
+  color: #475569;
+}
+
+.import-section {
+  padding: clamp(1rem, 4vw, 1.5rem);
+  border: 1px solid #cbd5e1;
+  border-radius: 0.5rem;
+  background: #fff;
+}
+
+.import-section h2 {
+  margin: 0 0 1.25rem;
+  font-size: 1.5rem;
+}
+
+.import-section label {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-weight: 600;
+}
+
+.import-section input[type='file'] {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  padding: 0.5rem;
+  border: 1px solid #64748b;
+  border-radius: 0.25rem;
+  color: inherit;
+  background: #fff;
+  font: inherit;
+}
+
+.import-section input[type='file']::file-selector-button {
+  margin-right: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border: 0;
+  border-radius: 0.25rem;
+  color: #0f172a;
+  background: #e2e8f0;
+  font: inherit;
+  cursor: pointer;
+}
+
+.import-section input[type='file']:focus-visible {
+  outline: 3px solid #1d4ed8;
+  outline-offset: 3px;
+}
+
+.helper-text {
+  margin: 0.75rem 0 0;
+  color: #475569;
+  font-size: 0.9375rem;
+}
