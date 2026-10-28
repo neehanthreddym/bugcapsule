@@ -2,44 +2,59 @@
 
 **Share the bug. Keep the production data.**
 
-BugCapsule turns a sensitive HAR (HTTP Archive) network capture into a shareable, runnable capsule: production data is replaced with consistent synthetic values, authentication material is removed locally, and a verification step proves the original API failure still reproduces from a local mock server — no production account, no original customer records, and no AI account needed to run the exported capsule.
+BugCapsule is being built to turn a sensitive HAR (HTTP Archive) network capture into a shareable, runnable capsule: production data will be replaced with consistent synthetic values, authentication material will be removed locally, and deterministic verification will check that a supported API failure still reproduces from a local mock server. The exported capsule is intended to run without a production account, original customer records, or an AI account.
 
 Built for the **Meta Global AI Developer Hackathon** (Oct 26 – Nov 4, 2026) · Indie Developer track · Theme: Push the Frontier (developer tooling) · Team: BugCapsule (solo)
+
+## Status
+
+🚧 Under active development during the hackathon (Oct 26 – Nov 4, 2026). All code and demonstration captures in this repository are created during the event, using synthetic data only.
+
+Currently working:
+
+- FastAPI backend health endpoint at `/health` and interactive API documentation at `/docs`.
+- React frontend shell with a labeled native HAR file selector. Selecting a file does not upload or process it.
+
+HAR parsing, authentication scrubbing, model integration, replacement, verification, and capsule export are **not implemented**. The workflow below describes the planned MVP.
 
 ## The problem
 
 Developers share HAR files to investigate API failures, but those files can contain authentication tokens, cookies, and customer response data. Existing sanitizers strip secrets — but stripping alone doesn't prove the transformed capture still demonstrates the failure, and replacing every identifier with `[REDACTED]` destroys cross-request relationships (which IDs are equal, which are different), often killing the bug in the shared file.
 
-## How it works
+## How it works (planned)
 
 1. **Import** one HAR file, locally.
-2. **Select** the relevant requests and confirm the failure to preserve.
+2. **Select** the relevant requests, confirm the failure to preserve, and inspect the exact outbound payload before any model call.
 3. **Review** the transformation plan proposed by the agent.
 4. **Build capsule** — deterministic local replacement + verification.
-5. **Download** the runnable package: transformed capture, local mock/replay API, and a verification report.
+5. **Approve export and download** the runnable package: transformed capture, local mock/replay API, and a verification report.
 
 ## Where Meta AI does essential work
 
-Muse Spark 1.3 (Meta Model API) runs a bounded agentic workflow: it inspects structural metadata and pseudonymized examples from the selected transactions, infers semantic relationships between fields across requests and responses (for example, `customer.id` in one response matching `owner_id` in a later request), proposes relationship-preserving replacements and verification checks, and revises the plan when verification exposes broken relationships.
+The planned Muse Spark 1.3 (Meta Model API) integration will run a bounded agentic workflow: it will inspect structural metadata and pseudonymized examples from the selected transactions, infer semantic relationships between fields across requests and responses (for example, `customer.id` in one response matching `owner_id` in a later request), propose relationship-preserving replacements and verification checks, and revise the plan when verification exposes broken relationships.
 
-All replacements and verification are performed by deterministic local code. Removing the model removes the automatic interpretation of unfamiliar APIs — every field mapping would have to be configured by hand.
+All replacements and verification will be performed by deterministic local code. The model's intended role is automatic interpretation of unfamiliar APIs; without it, field mappings would have to be configured by hand. Meta API access and exact API details are unverified and must be checked against official documentation before implementing the agent.
 
 ## MVP scope
 
 **In scope**
+
 - HAR files containing JSON REST responses; one selected API origin; at most 10 selected transactions
-- Three failure patterns: duplicate pagination records, missing/null fields, inconsistent identifier references
+- Exactly three planned failure patterns: duplicate pagination records, missing/null fields, inconsistent identifier references
 - Consistent replacement engine: equal original values stay equal, different values stay different
 - Transformation preview with human review before export
 - Local replay server from a fixed template, plus an exported verification report
 
 **Out of scope**
+
 - Authentication flows, GraphQL, WebSockets, binary/non-JSON responses
 - Reproducing an entire application or frontend
 - Automatic publication, model training/fine-tuning
 - Any claim of guaranteed anonymization
 
 ## Privacy by design
+
+These requirements apply to the planned processing pipeline; that pipeline is not implemented yet.
 
 - Raw HAR files never leave your machine; original response bodies stay local.
 - Authentication material (Authorization headers, cookies, tokens) is removed deterministically, locally, **before** any model call.
@@ -50,12 +65,66 @@ All replacements and verification are performed by deterministic local code. Rem
 
 - **Backend:** Python, FastAPI, Pydantic
 - **Frontend:** React, Vite
-- **Model:** Muse Spark 1.3 via Meta Model API
+- **Model (planned):** Muse Spark 1.3 via Meta Model API; access and exact API details unverified
 - **Replay:** fixed-template local mock server included in each exported capsule
 
-## Status
+## Setup
 
-🚧 Under active development during the hackathon (Oct 26 – Nov 4, 2026). All code and demonstration captures in this repository are created during the event, using synthetic data only.
+Prerequisites: Python 3.11 or later, plus Node.js and npm compatible with the frontend dependencies.
+
+The existing Python virtual environment is `.venv/` at the repository root. Reuse it locally. On a fresh clone without that environment, create it from the repository root:
+
+```sh
+python3 -m venv .venv
+```
+
+Install backend dependencies from `backend/`, activating the root environment (macOS/Linux shell):
+
+```sh
+cd backend
+source ../.venv/bin/activate
+python -m pip install -e ".[dev]"
+```
+
+The `dev` extra includes pytest. `backend/.env.example` contains placeholder configuration names only; Meta credentials are not needed for the current shell. Keep real keys backend-only and never commit the real `.env`.
+
+In a separate terminal, install frontend dependencies from the repository root:
+
+```sh
+cd frontend
+npm ci
+```
+
+## Usage
+
+Start the backend from the repository root in one terminal:
+
+```sh
+cd backend
+source ../.venv/bin/activate
+python -m uvicorn app.main:app --reload
+```
+
+- Open `http://127.0.0.1:8000/health`; the implemented endpoint returns `{"status":"ok"}`.
+- Open `http://127.0.0.1:8000/docs` for FastAPI's interactive API documentation.
+
+Start the frontend from the repository root in a second terminal:
+
+```sh
+cd frontend
+npm run dev
+```
+
+Open the local URL printed by Vite. The page displays BugCapsule's title, tagline, and HAR file selector. Selecting a file only updates the native input; there is no file reading, upload, parsing, or backend processing.
+
+Frontend checks run from `frontend/`:
+
+```sh
+npm run build
+npm run lint
+```
+
+Backend checks run from `backend/` with the existing virtual environment activated, using `python -m pytest`. No test cases are implemented yet.
 
 ## Who it's for
 
