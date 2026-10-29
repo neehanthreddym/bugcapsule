@@ -4,8 +4,9 @@ Parses/selects the fixture's two transactions, prepares the restricted
 payload with explicitly configured approved labels, shows the exact preview,
 requires affirmative terminal confirmation bound to that snapshot, makes at
 most one model request, and prints the validated proposal with concise
-usage/latency or a safe failure. Never applies transformations, exports, or
-implies verification passed.
+usage/latency or a safe failure. Default mode never applies transformations,
+exports, or implies verification passed. Optional --execute adds local plan approval
+and bounded verification/revision, still without exporting or writing files.
 """
 
 import json
@@ -16,6 +17,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.agent.client import AgentError, AgentIncompleteResponseError  # noqa: E402
+from app.agent.execution import (  # noqa: E402
+    MAX_MODEL_REQUESTS, ExecutionError, ExecutionSession, approve_execution,
+)
 from app.agent.workflow import (  # noqa: E402
     ApprovalError,
     PlanValidationError,
@@ -51,7 +55,76 @@ def _fail(message: str) -> int:
     return 1
 
 
+def _confirm(keyword: str, description: str) -> bool:
+    try:
+        return input(f"Type {keyword} to {description}: ").strip() == keyword
+    except (EOFError, KeyboardInterrupt):
+        return False
+
+
+def _execution_evidence(result) -> None:
+    safe = {"status": result.status, "reason": result.reason, "attempts": result.attempts}
+    if result.verification is not None:
+        verification = result.verification
+        safe["verification"] = {"outcome": verification.outcome, "reason": verification.reason}
+        for name, evidence in (("baseline", verification.baseline), ("candidate", verification.transformed)):
+            if evidence is not None:
+                safe["verification"][name] = {
+                    "observations": evidence.observations, "failures": evidence.failures,
+                    "distinct_identities": evidence.distinct_identities,
+                }
+    print(json.dumps(safe, ensure_ascii=True, indent=2))
+    print("Verification covers only the configured failure. Candidate remains private; no export or file writes.")
+
+
+def _execute_fixture() -> int:
+    print("BugCapsule approved fixture execution (at most two model requests).")
+    try:
+        selected = select_transactions(parse_har(FIXTURE_PATH), [0, 1])
+        session = ExecutionSession(selected, FAILURE_PATTERN, approved_labels=APPROVED_LABELS)
+    except (HarParseError, HarSelectionError, PrivacyError, ValueError) as error:
+        return _fail(str(error))
+    for _ in range(MAX_MODEL_REQUESTS):
+        print("Exact payload preview to send:")
+        print(session.prepared.preview_json)
+        if not _confirm(APPROVAL_KEYWORD, "send this exact snapshot (one request, no retries)"):
+            _execution_evidence(session.cancel())
+            return 1
+        try:
+            session.request_proposal(approve_preview(session.prepared))
+            if session.result is not None and session.result.status == "review_required":
+                _execution_evidence(session.result)
+                return 1
+            review = session.review_plan()
+            print("Resolved replacement plan and selected check (local only):")
+            print(review.preview_json)
+            if not _confirm("EXECUTE", "apply this exact plan and check locally"):
+                _execution_evidence(session.cancel())
+                return 1
+            result = session.execute(approve_execution(review))
+            _execution_evidence(result)
+            if result.status == "revision_available":
+                session.prepare_revision()
+                continue
+            return 0 if result.status == "preserved" else 1
+        except (ApprovalError, PlanValidationError, AgentError, ConfigError, ExecutionError) as error:
+            print(f"Safe failure: {error}")
+            if isinstance(error, AgentIncompleteResponseError):
+                print("Incomplete diagnostics: " + json.dumps(error.diagnostics.as_dict(), sort_keys=True))
+            if session.result is not None:
+                _execution_evidence(session.result)
+            else:
+                _execution_evidence(session.cancel())
+            return 1
+        except KeyboardInterrupt:
+            _execution_evidence(session.cancel())
+            return 1
+    return _fail("Request budget exhausted.")
+
+
 def main() -> int:
+    if sys.argv[1:] == ["--execute"]:
+        return _execute_fixture()
     if len(sys.argv) != 1:
         return _fail("This driver only runs the committed duplicate-pagination fixture.")
     print("BugCapsule Step 8 fixture planner (synthetic fixture only).")

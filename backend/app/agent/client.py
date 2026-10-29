@@ -51,6 +51,10 @@ INSTRUCTIONS = (
     "pattern. If evidence is ambiguous or insufficient, set needs_review true "
     "with a reason. Return a single propose_capsule_plan tool call. Do not "
     "include code, shell commands, URLs, or executable expressions."
+    " If revision feedback is present, revise replacements only. Keep the "
+    "revision.frozen_check type and ordered refs unchanged. Preserve the original "
+    "failure, including dangling references and missing/null states; never "
+    "remove records or weaken the check to obtain a passing result."
 )
 
 TOOL_SCHEMA: dict[str, Any] = {

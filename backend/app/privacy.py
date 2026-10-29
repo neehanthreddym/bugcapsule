@@ -46,6 +46,7 @@ from app.engine.scrub import (
     _is_json, _mime, _read_text, _reject_constant, scrub_transactions,
 )
 from app.schemas import HarTransaction
+from app.verify.schemas import VerificationResult
 
 
 FailurePattern = Literal[
@@ -68,6 +69,8 @@ MAX_EXAMPLES_TOTAL = 128
 MAX_PAYLOAD_BYTES = 65_536
 MAX_APPROVED_LABELS = 64
 MAX_APPROVED_LABEL_BYTES = 64
+MAX_FEEDBACK_COUNTS = 1_000_000_000
+MAX_FEEDBACK_LOCATIONS = 100
 
 
 class PrivacyError(ValueError):
@@ -356,3 +359,108 @@ def prepare_model_payload(
         raise
     except (ValueError, TypeError, KeyError, AttributeError, RecursionError):
         raise PrivacyError("Unsupported or malformed local input.") from None
+
+
+def prepare_revision_payload(
+    transactions: Sequence[HarTransaction], original: PreparedPayload,
+    verification: VerificationResult, *,
+    prior_replacements: Sequence[tuple[str, str]], check_refs: Sequence[str],
+    definition_refs: Sequence[str] = (), approved_labels: frozenset[str] = frozenset(),
+) -> PreparedPayload:
+    """Rebuild the original restricted snapshot and add allowlisted changed feedback.
+
+    Nothing from a candidate or model prose is copied. The original snapshot must
+    match a fresh preparation of the baseline, preserving node/token identities.
+    Only fixed reason codes, bounded counts, existing refs/kinds, and explicit
+    frozen check roles are added. Each evidence list is capped at 100 locations;
+    counts are nonnegative integers at most MAX_FEEDBACK_COUNTS. The existing
+    MAX_PAYLOAD_BYTES cap includes feedback. This creates no send approval.
+    """
+    try:
+        if not isinstance(original, PreparedPayload) or not isinstance(verification, VerificationResult):
+            raise ValueError
+        verification = VerificationResult.model_validate(verification.model_dump(warnings=False))
+        if verification.outcome != "changed":
+            raise ValueError
+        pattern = original.payload["failure_pattern"]
+        fresh = prepare_model_payload(transactions, pattern, approved_labels=approved_labels)
+        if fresh.preview_json != original.preview_json:
+            raise ValueError
+        payload = fresh.payload
+        known = {}
+
+        def visit(node):
+            known[node["ref"]] = original.bindings.resolve(node["ref"])
+            for field in node.get("fields", []):
+                visit(field["node"])
+            if "items" in node:
+                visit(node["items"])
+
+        for entry in payload["transactions"]:
+            for target in ("query", "request_json", "response_json"):
+                if target in entry:
+                    visit(entry[target])
+
+        def refs(values):
+            if (isinstance(values, (str, bytes)) or not isinstance(values, Sequence)
+                    or len(values) > 10 or any(type(ref) is not str or ref not in known for ref in values)
+                    or len(set(values)) != len(values)):
+                raise ValueError
+            return list(values)
+
+        def count(value):
+            if type(value) is not int or not 0 <= value <= MAX_FEEDBACK_COUNTS:
+                raise ValueError
+            return value
+
+        frozen_refs, definitions = refs(check_refs), refs(definition_refs)
+        if not frozen_refs:
+            raise ValueError
+        if pattern == "inconsistent_identifier_references":
+            if not definitions or not set(definitions) < set(frozen_refs):
+                raise ValueError
+        elif definitions:
+            raise ValueError
+        canonical = "inconsistent_references" if pattern == "inconsistent_identifier_references" else pattern
+        if verification.check != canonical:
+            raise ValueError
+        if (isinstance(prior_replacements, (str, bytes)) or not isinstance(prior_replacements, Sequence)
+                or not 1 <= len(prior_replacements) <= 64):
+            raise ValueError
+        prior = []
+        for pair in prior_replacements:
+            if not isinstance(pair, (tuple, list)) or len(pair) != 2:
+                raise ValueError
+            ref, kind = pair
+            if type(ref) is not str or ref not in known or type(kind) is not str or kind not in {"id", "email", "name", "text"}:
+                raise ValueError
+            prior.append({"ref": ref, "kind": kind})
+
+        def evidence(summary):
+            if summary is None or len(summary.record_counts) > MAX_FEEDBACK_LOCATIONS:
+                raise ValueError
+            result = {"observations": count(summary.observations), "failures": count(summary.failures)}
+            if summary.distinct_identities is not None:
+                result["distinct_identities"] = count(summary.distinct_identities)
+            locations = []
+            for record in summary.record_counts:
+                safe_refs = refs(record.location.refs)
+                if not safe_refs or any(known[ref].entry_id != record.location.entry_id for ref in safe_refs):
+                    raise ValueError
+                locations.append({"entry_id": record.location.entry_id, "refs": safe_refs, "count": count(record.count)})
+            result["record_counts"] = locations
+            return result
+
+        payload["revision"] = {
+            "verification": {"outcome": "changed", "reason": verification.reason,
+                             "baseline": evidence(verification.baseline),
+                             "candidate": evidence(verification.transformed)},
+            "prior_replacements": prior,
+            "frozen_check": {"type": pattern, "refs": frozen_refs, "definition_refs": definitions},
+        }
+        preview = json.dumps(payload, ensure_ascii=True, allow_nan=False, indent=2)
+        if len(preview.encode("utf-8")) > MAX_PAYLOAD_BYTES:
+            raise ValueError
+        return PreparedPayload(preview, original.bindings)
+    except (ValueError, TypeError, KeyError, AttributeError, RecursionError):
+        raise PrivacyError("Cannot prepare restricted revision feedback.") from None
