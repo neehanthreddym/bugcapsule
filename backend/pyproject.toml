@@ -5,7 +5,7 @@ requires-python = ">=3.11"
 dependencies = ["fastapi", "uvicorn", "pydantic"]
 
 [project.optional-dependencies]
-dev = ["pytest"]
+dev = ["pytest", "httpx2>=2.0.0"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
