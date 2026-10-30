@@ -13,6 +13,9 @@ from collections.abc import Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
 import json
+import hashlib
+import hmac
+import secrets
 from typing import Literal
 
 from app.agent.client import Transport
@@ -30,6 +33,7 @@ from app.verify.schemas import CheckConfig, VerificationResult
 
 
 MAX_MODEL_REQUESTS = 2
+_RESULT_KEY = secrets.token_bytes(32)
 
 
 class ExecutionError(ValueError):
@@ -87,6 +91,38 @@ class ExecutionResult:
     attempts: int
     verification: VerificationResult | None = None
     candidate: tuple[HarTransaction, ...] | None = field(default=None, repr=False)
+    _seal: bytes | None = field(default=None, repr=False, compare=False)
+
+
+def _result_signature(result: ExecutionResult) -> bytes:
+    # Explicitly include the retained entries excluded from normal model dumps.
+    snapshot = {"status": result.status, "reason": result.reason, "attempts": result.attempts,
+                "verification": result.verification.model_dump(mode="json"),
+                "candidate": [{**tx.model_dump(), "original_entry": tx.original_entry}
+                              for tx in result.candidate]}
+    return hmac.digest(_RESULT_KEY, _json(snapshot).encode("utf-8"), hashlib.sha256)
+
+
+def verified_export_result(result: ExecutionResult) -> ExecutionResult:
+    """Return an independent, intact session-issued success or fail value-free.
+
+    The process-local seal binds the complete candidate and report at successful
+    execution. This is an in-process integrity boundary, not persistent signing.
+    Results from an earlier process cannot be imported or trusted as receipts.
+    """
+    try:
+        result = deepcopy(result)
+        if (not isinstance(result, ExecutionResult) or result.status != "preserved"
+                or result.reason != "configured_failure_preserved"
+                or result.attempts not in (1, 2) or not result.candidate
+                or result.verification is None or result.verification.outcome != "preserved"
+                or result.verification.reason != "failure_preserved"
+                or not isinstance(result._seal, bytes)
+                or not hmac.compare_digest(result._seal, _result_signature(result))):
+            raise ValueError
+        return result
+    except (ValueError, TypeError, AttributeError, RecursionError):
+        raise ExecutionError("Missing, stale, or mismatched verified execution result.") from None
 
 
 class ExecutionSession:
@@ -129,6 +165,8 @@ class ExecutionSession:
     def _stop(self, status, reason, verification=None, candidate=None):
         self._phase = "stopped"
         self._result = ExecutionResult(status, reason, self._attempts, verification, candidate)
+        if status == "preserved":
+            object.__setattr__(self._result, "_seal", _result_signature(self._result))
         return self.result
 
     def cancel(self) -> ExecutionResult:

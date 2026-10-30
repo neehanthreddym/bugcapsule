@@ -6,7 +6,8 @@ requires affirmative terminal confirmation bound to that snapshot, makes at
 most one model request, and prints the validated proposal with concise
 usage/latency or a safe failure. Default mode never applies transformations,
 exports, or implies verification passed. Optional --execute adds local plan approval
-and bounded verification/revision, still without exporting or writing files.
+and bounded verification/revision. --execute --export adds separate exact-file
+review and export approval; only that mode can write a local capsule ZIP.
 """
 
 import json
@@ -29,6 +30,7 @@ from app.agent.workflow import (  # noqa: E402
 from app.config import ConfigError  # noqa: E402
 from app.engine.har import HarParseError, HarSelectionError, parse_har, select_transactions  # noqa: E402
 from app.privacy import PrivacyError, prepare_model_payload  # noqa: E402
+from app.export import ExportError, approve_export, prepare_capsule, write_capsule  # noqa: E402
 
 
 FIXTURE_PATH = Path(__file__).resolve().parents[2] / "fixtures" / "duplicate-pagination.har"
@@ -48,6 +50,7 @@ APPROVED_LABELS = frozenset({
     "updated_at",
 })
 APPROVAL_KEYWORD = "APPROVE"
+CAPSULE_DIR = Path(__file__).resolve().parents[2] / "local" / "capsules"
 
 
 def _fail(message: str) -> int:
@@ -77,7 +80,24 @@ def _execution_evidence(result) -> None:
     print("Verification covers only the configured failure. Candidate remains private; no export or file writes.")
 
 
-def _execute_fixture() -> int:
+def _export_fixture(result) -> int:
+    try:
+        preview = prepare_capsule(result)
+        print("Exact capsule files (JSON filename-to-content map):")
+        print(preview.preview_json)
+        print(f"Capsule SHA-256: {preview.digest}")
+        print("Review all contents, including routing and untargeted values. No anonymization guarantee.")
+        if not _confirm("EXPORT", "write exactly these four files as a local ZIP"):
+            print("Export cancelled; no files written.")
+            return 1
+        path = write_capsule(preview, approve_export(preview), CAPSULE_DIR / f"capsule-{preview.digest}.zip")
+        print(f"Approved capsule written: {path}")
+        return 0
+    except ExportError as error:
+        return _fail(str(error))
+
+
+def _execute_fixture(*, export=False) -> int:
     print("BugCapsule approved fixture execution (at most two model requests).")
     try:
         selected = select_transactions(parse_har(FIXTURE_PATH), [0, 1])
@@ -106,6 +126,8 @@ def _execute_fixture() -> int:
             if result.status == "revision_available":
                 session.prepare_revision()
                 continue
+            if result.status == "preserved" and export:
+                return _export_fixture(result)
             return 0 if result.status == "preserved" else 1
         except (ApprovalError, PlanValidationError, AgentError, ConfigError, ExecutionError) as error:
             print(f"Safe failure: {error}")
@@ -123,8 +145,11 @@ def _execute_fixture() -> int:
 
 
 def main() -> int:
-    if sys.argv[1:] == ["--execute"]:
-        return _execute_fixture()
+    args = sys.argv[1:]
+    if args and len(args) == len(set(args)) and set(args) <= {"--execute", "--export"}:
+        if "--execute" not in args:
+            return _fail("--export requires --execute.")
+        return _execute_fixture(export="--export" in args)
     if len(sys.argv) != 1:
         return _fail("This driver only runs the committed duplicate-pagination fixture.")
     print("BugCapsule Step 8 fixture planner (synthetic fixture only).")
