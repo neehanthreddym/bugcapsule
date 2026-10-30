@@ -20,14 +20,16 @@
   color: #475569;
 }
 
-.import-section {
+.import-section,
+.review-section {
   padding: clamp(1rem, 4vw, 1.5rem);
   border: 1px solid #cbd5e1;
   border-radius: 0.5rem;
   background: #fff;
 }
 
-.import-section h2 {
+.import-section h2,
+.review-section h2 {
   margin: 0 0 1.25rem;
   font-size: 1.5rem;
 }
@@ -61,7 +63,7 @@
   cursor: pointer;
 }
 
-.import-section input[type='file']:focus-visible {
+:is(input, button):focus-visible {
   outline: 3px solid #1d4ed8;
   outline-offset: 3px;
 }
@@ -70,4 +72,125 @@
   margin: 0.75rem 0 0;
   color: #475569;
   font-size: 0.9375rem;
+}
+
+button {
+  margin-top: 1rem;
+  padding: 0.65rem 1rem;
+  border: 1px solid #1d4ed8;
+  border-radius: 0.25rem;
+  background: #1d4ed8;
+  color: #fff;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  background: #1e40af;
+}
+
+button:disabled {
+  border-color: #cbd5e1;
+  background: #e2e8f0;
+  color: #475569;
+  cursor: not-allowed;
+}
+
+.secondary-button {
+  margin-top: 0;
+  background: #fff;
+  color: #1d4ed8;
+}
+
+.secondary-button:hover:not(:disabled) {
+  background: #eff6ff;
+}
+
+.section-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.section-header h2 {
+  margin: 0;
+}
+
+.status-message {
+  min-height: 1.5rem;
+  margin: 1rem 0;
+}
+
+.error-message {
+  padding: 0.75rem;
+  border: 1px solid #b91c1c;
+  border-radius: 0.25rem;
+  background: #fef2f2;
+  color: #991b1b;
+}
+
+fieldset {
+  min-width: 0;
+  margin: 1.25rem 0;
+  padding: 0;
+  border: 0;
+}
+
+legend {
+  margin-bottom: 0.5rem;
+  padding: 0;
+  font-weight: 600;
+}
+
+.choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 0.5rem 0;
+  overflow-wrap: anywhere;
+}
+
+.choice input {
+  flex-shrink: 0;
+  width: 1.125rem;
+  height: 1.125rem;
+  margin: 0.2rem 0 0;
+  accent-color: #1d4ed8;
+}
+
+.transaction-list {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.transaction {
+  padding: 0.75rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.25rem;
+}
+
+.transaction-path {
+  display: block;
+  margin: 0.25rem 0;
+}
+
+.confirmation {
+  margin-top: 1rem;
+  padding: 1rem;
+  border: 1px solid #15803d;
+  border-radius: 0.25rem;
+  background: #f0fdf4;
+  color: #14532d;
+  overflow-wrap: anywhere;
+}
+
+.confirmation p {
+  margin: 0.5rem 0 0;
+}
+
+.skipped-entries {
+  margin-top: 1.5rem;
 }
