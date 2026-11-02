@@ -361,6 +361,39 @@ def prepare_model_payload(
         raise PrivacyError("Unsupported or malformed local input.") from None
 
 
+def available_schema_labels(transactions: Sequence[HarTransaction]) -> tuple[str, ...]:
+    """Local-only names for explicit human review, never an outbound payload.
+
+    Reuse the sole builder with no approvals for mandatory scrubbing, supported
+    documents and all structural/input limits. Only fields surviving that builder
+    are offered. Bindings resolve names locally; no values or paths are returned.
+    The fixed pattern is only for structural discovery, never evidence of a bug.
+    All choices must fit the existing approval count and UTF-8 label-byte limits;
+    reject oversized sets rather than silently hiding names from review.
+    """
+    prepared = prepare_model_payload(transactions, "duplicate_pagination")
+    labels = set()
+
+    def visit(node):
+        for field in node.get("fields", []):
+            path = prepared.bindings.resolve(field["node"]["ref"]).path
+            if not path or not isinstance(path[-1], ObjectKey):
+                raise PrivacyError("Unsupported schema-label choices.")
+            labels.add(path[-1].key)
+            if (len(labels) > MAX_APPROVED_LABELS
+                    or len(path[-1].key.encode("utf-8")) > MAX_APPROVED_LABEL_BYTES):
+                raise PrivacyError("Schema-label choices exceed approval limits.")
+            visit(field["node"])
+        if "items" in node:
+            visit(node["items"])
+
+    for entry in prepared.payload["transactions"]:
+        for target in ("query", "response_json", "request_json"):
+            if target in entry:
+                visit(entry[target])
+    return tuple(sorted(labels))
+
+
 def prepare_revision_payload(
     transactions: Sequence[HarTransaction], original: PreparedPayload,
     verification: VerificationResult, *,

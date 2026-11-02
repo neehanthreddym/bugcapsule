@@ -21,7 +21,8 @@
 }
 
 .import-section,
-.review-section {
+.review-section,
+.model-section {
   padding: clamp(1rem, 4vw, 1.5rem);
   border: 1px solid #cbd5e1;
   border-radius: 0.5rem;
@@ -29,7 +30,8 @@
 }
 
 .import-section h2,
-.review-section h2 {
+.review-section h2,
+.model-section h2 {
   margin: 0 0 1.25rem;
   font-size: 1.5rem;
 }
@@ -63,7 +65,7 @@
   cursor: pointer;
 }
 
-:is(input, button):focus-visible {
+:is(input, button, select, pre):focus-visible {
   outline: 3px solid #1d4ed8;
   outline-offset: 3px;
 }
@@ -193,4 +195,37 @@ legend {
 
 .skipped-entries {
   margin-top: 1.5rem;
+}
+
+.model-section {
+  margin-top: 1.5rem;
+}
+
+.model-section select {
+  display: block;
+  width: 100%;
+  margin-top: 0.5rem;
+  padding: 0.65rem;
+  border: 1px solid #64748b;
+  border-radius: 0.25rem;
+  color: inherit;
+  background: #fff;
+  font: inherit;
+}
+
+.preview-digest {
+  overflow-wrap: anywhere;
+}
+
+.model-preview-text {
+  max-height: 32rem;
+  overflow: auto;
+  padding: 1rem;
+  border: 1px solid #64748b;
+  border-radius: 0.25rem;
+  background: #f8fafc;
+  font-size: 0.875rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
 }

@@ -10,6 +10,8 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.responses import JSONResponse
 
+from app.privacy import FailurePattern, MAX_APPROVED_LABELS
+
 
 class _DTO(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid", hide_input_in_errors=True)
@@ -54,6 +56,30 @@ class SelectionRequest(_DTO):
     entry_ids: list[int] = Field(min_length=1, max_length=10)
 
 
+class SchemaLabelChoices(_DTO):
+    labels: list[str]
+
+
+class PreviewRequest(_DTO):
+    failure_pattern: FailurePattern
+    approved_labels: list[str] = Field(default_factory=list, max_length=MAX_APPROVED_LABELS)
+
+
+class PreviewMetadata(_DTO):
+    examples_truncated: bool
+    examples_omitted: int
+    max_examples_per_node: int
+    max_examples_total: int
+
+
+class ModelPreview(_DTO):
+    preview_id: str
+    preview_json: str
+    byte_count: int
+    sha256: str
+    metadata: PreviewMetadata
+
+
 ERRORS = {
     "invalid_har": (400, "Invalid HAR JSON or capture structure."),
     "unsupported_media_type": (415, "Use application/json with an unencoded UTF-8 HAR body."),
@@ -61,6 +87,10 @@ ERRORS = {
     "invalid_selection": (422, "Select 1–10 unique supported integer IDs from one origin."),
     "capture_not_found": (404, "Capture not found or expired."),
     "capture_capacity": (409, "Capture capacity reached; delete a capture or wait for expiry."),
+    "selection_required": (409, "Confirm a transaction selection before preparing a model preview."),
+    "invalid_preview_settings": (422, "Choose a supported failure pattern and unique labels from the offered choices."),
+    "label_choices_unavailable": (422, "Selected data is unsupported or exceeds schema-label or privacy limits."),
+    "preview_unavailable": (422, "Selected data is unsupported or exceeds model-payload privacy limits."),
     "invalid_host": (400, "Only loopback Host values are accepted."),
     "invalid_origin": (403, "Browser Origin is not allowed."),
     "invalid_request": (400, "Invalid local API request."),

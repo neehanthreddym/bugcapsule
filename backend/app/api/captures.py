@@ -11,7 +11,10 @@ from fastapi import APIRouter, Request, Response
 from starlette.concurrency import run_in_threadpool
 from starlette.requests import ClientDisconnect
 
-from app.api.schemas import CaptureApiError, CaptureSummary, SelectionRequest, SelectionSummary
+from app.api.schemas import (
+    CaptureApiError, CaptureSummary, ModelPreview, PreviewRequest, SchemaLabelChoices,
+    SelectionRequest, SelectionSummary,
+)
 from app.engine.har import HarParseError, parse_har
 from app.services.capture_store import CaptureStore
 
@@ -65,3 +68,13 @@ def select_capture(capture_id: str, selection: SelectionRequest, request: Reques
 def delete_capture(capture_id: str, request: Request) -> Response:
     _store(request).delete(capture_id)
     return Response(status_code=204)
+
+
+@router.get("/{capture_id}/schema-labels", response_model=SchemaLabelChoices)
+def schema_labels(capture_id: str, request: Request) -> SchemaLabelChoices:
+    return _store(request).schema_labels(capture_id)
+
+
+@router.post("/{capture_id}/model-preview", response_model=ModelPreview)
+def model_preview(capture_id: str, settings: PreviewRequest, request: Request) -> ModelPreview:
+    return _store(request).prepare_preview(capture_id, settings.failure_pattern, settings.approved_labels)

@@ -1,4 +1,4 @@
-// Local import/selection only. Never log or persist captures or API responses.
+// Local import, selection and preview only. Never log or persist captured data.
 export const API_BASE = 'http://127.0.0.1:8000'
 export const MAX_IMPORT_BYTES = 16 * 1024 * 1024
 const REQUEST_TIMEOUT_MS = 30_000
@@ -10,6 +10,10 @@ const ERROR_MESSAGES = {
   invalid_selection: 'Select 1–10 unique requests from one API origin, then try again.',
   capture_not_found: 'This capture expired or was removed. Import the HAR again.',
   capture_capacity: 'The local backend already holds five captures. Clear one or wait for the 30-minute expiry.',
+  selection_required: 'Confirm your transaction selection again before preparing a preview.',
+  invalid_preview_settings: 'Choose a supported failure pattern and unique labels from the offered choices.',
+  label_choices_unavailable: 'These requests are unsupported or exceed the schema-label or privacy limits. Choose a smaller or different selection.',
+  preview_unavailable: 'These requests cannot produce a preview within the privacy limits. Choose a smaller or different selection.',
   invalid_host: 'The backend accepts loopback hosts only. Use the local development servers.',
   invalid_origin: 'Open the frontend at http://localhost:5173 or http://127.0.0.1:5173.',
   invalid_request: 'The local backend rejected the request. Try again.',
@@ -118,4 +122,32 @@ export async function saveSelection(captureId, entryIds, origin) {
 export async function deleteCapture(captureId) {
   const { status } = await request(`/api/captures/${encodeURIComponent(captureId)}`, { method: 'DELETE' })
   if (status !== 204) throw new ApiError('invalid_response')
+}
+
+export async function fetchSchemaLabels(captureId) {
+  const { status, data } = await request(`/api/captures/${encodeURIComponent(captureId)}/schema-labels`, { method: 'GET' })
+  if (status !== 200 || !Array.isArray(data?.labels) || data.labels.length > 64
+    || data.labels.some((label) => typeof label !== 'string' || new TextEncoder().encode(label).length > 64)
+    || new Set(data.labels).size !== data.labels.length) {
+    throw new ApiError('invalid_response')
+  }
+  return data.labels
+}
+
+export async function prepareModelPreview(captureId, failurePattern, approvedLabels) {
+  const { status, data } = await request(`/api/captures/${encodeURIComponent(captureId)}/model-preview`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ failure_pattern: failurePattern, approved_labels: approvedLabels }),
+  })
+  const metadata = data?.metadata
+  if (status !== 200 || typeof data?.preview_id !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(data.preview_id)
+    || typeof data.preview_json !== 'string' || !isId(data.byte_count) || data.byte_count > 65_536
+    || new TextEncoder().encode(data.preview_json).length !== data.byte_count
+    || typeof data.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(data.sha256)
+    || !metadata || typeof metadata.examples_truncated !== 'boolean'
+    || !isId(metadata.examples_omitted) || !isId(metadata.max_examples_per_node) || !isId(metadata.max_examples_total)) {
+    throw new ApiError('invalid_response')
+  }
+  return data // Preserve the exact preview_json string; never reserialize it.
 }

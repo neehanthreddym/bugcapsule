@@ -74,6 +74,8 @@ def create_app(*, capture_store: CaptureStore | None = None) -> FastAPI:
     @app.exception_handler(RequestValidationError)
     async def validation_error(request: Request, _error: RequestValidationError):
         code = "invalid_selection" if request.method == "PUT" and request.url.path.endswith("/selection") else "invalid_request"
+        if request.method == "POST" and request.url.path.endswith("/model-preview"):
+            code = "invalid_preview_settings"
         return error_response(code)
 
     @app.exception_handler(HTTPException)

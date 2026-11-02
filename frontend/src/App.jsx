@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { ApiError, deleteCapture, errorMessage, importCapture, saveSelection } from './api.js'
 import './App.css'
+import ModelPreview from './ModelPreview.jsx'
 
 function App() {
   const [file, setFile] = useState(null)
@@ -152,6 +153,11 @@ function App() {
   }
 
   const transactions = capture?.transactions.filter((tx) => tx.origin === origin) ?? []
+  const handleInvalidPreviewSelection = useCallback((error) => {
+    setConfirmed(null)
+    setCaptureError(errorMessage(error))
+    if (error.code === 'capture_not_found') setExpired(true)
+  }, [])
 
   return (
     <main className="shell">
@@ -255,6 +261,10 @@ function App() {
             </div>
           )}
         </section>
+      )}
+      {capture && confirmed && !busy && !expired && (
+        <ModelPreview key={`${capture.capture_id}:${confirmed.entry_ids.join(',')}`}
+          captureId={capture.capture_id} onInvalidSelection={handleInvalidPreviewSelection} />
       )}
     </main>
   )

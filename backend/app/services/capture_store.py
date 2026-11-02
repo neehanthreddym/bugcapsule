@@ -11,16 +11,20 @@ from collections.abc import Callable, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 import secrets
+import hashlib
 from threading import RLock
 import time
 from urllib.parse import urlsplit
 
 from app.api.schemas import (
-    CaptureApiError, CaptureSummary, OriginGroup, SelectionSummary,
-    SkippedEntrySummary, TransactionSummary,
+    CaptureApiError, CaptureSummary, ModelPreview, OriginGroup, PreviewMetadata,
+    SchemaLabelChoices, SelectionSummary, SkippedEntrySummary, TransactionSummary,
 )
 from app.engine.har import HarSelectionError, select_transactions
 from app.schemas import ParsedHar
+from app.privacy import (
+    FailurePattern, PreparedPayload, PrivacyError, available_schema_labels, prepare_model_payload,
+)
 
 
 MAX_CAPTURES = 5
@@ -28,11 +32,24 @@ CAPTURE_TTL_SECONDS = 30 * 60
 _METHODS = frozenset({"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "TRACE", "CONNECT"})
 
 
+@dataclass(frozen=True, repr=False)
+class _Preview:
+    """Local snapshot and its preparation context; this grants no approval."""
+
+    preview_id: str
+    entry_ids: tuple[int, ...]
+    failure_pattern: FailurePattern
+    approved_labels: frozenset[str]
+    prepared: PreparedPayload
+
+
 @dataclass(repr=False)
 class _Capture:
     parsed: ParsedHar
     expires_at: float
     entry_ids: tuple[int, ...] = ()
+    labels: tuple[str, ...] | None = None
+    preview: _Preview | None = None
 
 
 class CaptureStore:
@@ -106,8 +123,65 @@ class CaptureStore:
             except HarSelectionError:
                 raise CaptureApiError("invalid_selection") from None
             # Commit only after the real parser's selection validation succeeds.
-            capture.entry_ids = tuple(tx.entry_id for tx in selected)
+            next_ids = tuple(tx.entry_id for tx in selected)
+            if next_ids != capture.entry_ids:
+                capture.labels = None
+                capture.preview = None
+            capture.entry_ids = next_ids
             return self._selection(capture)
+
+    @staticmethod
+    def _selected(capture: _Capture):
+        if not capture.entry_ids:
+            raise CaptureApiError("selection_required")
+        return select_transactions(capture.parsed, capture.entry_ids)
+
+    def _labels(self, capture: _Capture) -> tuple[str, ...]:
+        if capture.labels is None:
+            try:
+                capture.labels = available_schema_labels(self._selected(capture))
+            except PrivacyError:
+                raise CaptureApiError("label_choices_unavailable") from None
+        return capture.labels
+
+    def schema_labels(self, capture_id: str) -> SchemaLabelChoices:
+        with self._lock:
+            capture = self._get(capture_id)
+            labels = self._labels(capture)
+            self._get(capture_id)
+            return SchemaLabelChoices(labels=list(labels))
+
+    def prepare_preview(self, capture_id: str, failure_pattern: FailurePattern,
+                        approved_labels: Sequence[str]) -> ModelPreview:
+        with self._lock:
+            capture = self._get(capture_id)
+            selected = self._selected(capture)
+            capture.preview = None
+            choices = self._labels(capture)
+            if (len(set(approved_labels)) != len(approved_labels)
+                    or not set(approved_labels) <= set(choices)):
+                raise CaptureApiError("invalid_preview_settings")
+            approved = frozenset(approved_labels)
+            try:
+                prepared = prepare_model_payload(selected, failure_pattern, approved_labels=approved)
+            except PrivacyError:
+                raise CaptureApiError("preview_unavailable") from None
+            # A large preparation must not revive a capture that expired during it.
+            self._get(capture_id)
+            snapshot = prepared.preview_json
+            encoded = snapshot.encode("utf-8")
+            metadata = prepared.payload["metadata"]
+            preview_id = secrets.token_urlsafe(24)
+            result = ModelPreview(
+                preview_id=preview_id, preview_json=snapshot, byte_count=len(encoded),
+                sha256=hashlib.sha256(encoded).hexdigest(),
+                metadata=PreviewMetadata(
+                    examples_truncated=metadata["examples_truncated"], examples_omitted=metadata["examples_omitted"],
+                    max_examples_per_node=metadata["max_examples_per_node"], max_examples_total=metadata["max_examples_total"],
+                ),
+            )
+            capture.preview = _Preview(preview_id, capture.entry_ids, failure_pattern, approved, prepared)
+            return result
 
     def delete(self, capture_id: str) -> None:
         with self._lock:
