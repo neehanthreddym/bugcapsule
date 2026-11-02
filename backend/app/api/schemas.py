@@ -12,6 +12,7 @@ from starlette.responses import JSONResponse
 
 from app.privacy import FailurePattern, MAX_APPROVED_LABELS
 from app.engine.replace import ObjectKey, ArrayItems
+from app.verify.schemas import VerificationResult
 
 
 class _DTO(BaseModel):
@@ -138,6 +139,15 @@ class ReviewCheck(_DTO):
     identity_groups: list[list[str]]
 
 
+class ExecutionReviewInfo(_DTO):
+    status: Literal["ready", "blocked"]
+    reason: Literal["ready", "model_requires_review", "unresolved_check", "reference_roles_required"]
+    review_id: str | None = None
+    sha256: str | None = None
+    attempt: int
+    review_json: str | None = None
+
+
 class ProposalReview(_DTO):
     proposal_id: str
     preview_id: str
@@ -153,6 +163,30 @@ class ProposalReview(_DTO):
     validation: Literal["schema_validated"] = "schema_validated"
     transformations: Literal["not_run"] = "not_run"
     verification: Literal["not_run"] = "not_run"
+    execution_review: ExecutionReviewInfo | None = None
+
+
+class ExecutionRequest(_DTO):
+    proposal_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")
+    review_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")
+    sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    approved: bool = False
+
+
+class ExecutionReport(_DTO):
+    execution_id: str
+    proposal_id: str
+    review_id: str
+    review_sha256: str
+    attempt: int
+    status: Literal["preserved", "revision_available", "review_required", "stopped", "cancelled"]
+    candidate_created: bool
+    reason: Literal[
+        "configured_failure_preserved", "baseline_failure_not_confirmed", "candidate_changed",
+        "verification_not_preserved", "execution_failed", "cancelled_by_user",
+    ]
+    verification: VerificationResult | None
+    limitations: list[str]
 
 
 ERRORS = {
@@ -178,6 +212,12 @@ ERRORS = {
     "planning_response_error": (502, "Meta did not return an acceptable tool response. It was not retried."),
     "planning_invalid_proposal": (502, "The proposed plan failed local validation. It was not retried."),
     "planning_failed": (500, "Planning stopped safely. No automatic retry was made."),
+    "execution_approval_required": (403, "Separate approval of the resolved local execution review is required."),
+    "invalid_execution_request": (422, "Provide only the proposal ID, execution-review ID, digest and explicit approval."),
+    "stale_execution_review": (409, "The proposal, execution review or upstream selection changed. No result was attached."),
+    "execution_blocked": (409, "Execution is blocked: resolve the check and explicit identifier roles, and review the proposal first."),
+    "execution_consumed": (409, "This execution was already submitted. It will not be run again."),
+    "local_execution_failed": (500, "Local execution stopped safely. No model request, automatic retry or export was made."),
     "invalid_host": (400, "Only loopback Host values are accepted."),
     "invalid_origin": (403, "Browser Origin is not allowed."),
     "invalid_request": (400, "Invalid local API request."),

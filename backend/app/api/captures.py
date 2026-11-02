@@ -12,7 +12,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.requests import ClientDisconnect
 
 from app.api.schemas import (
-    CaptureApiError, CaptureSummary, ModelPreview, PlanRequest, PreviewRequest, ProposalReview, SchemaLabelChoices,
+    CaptureApiError, CaptureSummary, ExecutionReport, ExecutionRequest, ModelPreview, PlanRequest, PreviewRequest, ProposalReview, SchemaLabelChoices,
     SelectionRequest, SelectionSummary,
 )
 from app.engine.har import HarParseError, parse_har
@@ -83,3 +83,8 @@ def model_preview(capture_id: str, settings: PreviewRequest, request: Request) -
 @router.post("/{capture_id}/plan", response_model=ProposalReview)
 def request_plan(capture_id: str, approval: PlanRequest, request: Request) -> ProposalReview:
     return _store(request).request_plan(capture_id, approval.preview_id, approval.sha256, approval.approved)
+
+
+@router.post("/{capture_id}/execute", response_model=ExecutionReport)
+def execute_plan(capture_id: str, approval: ExecutionRequest, request: Request) -> ExecutionReport:
+    return _store(request).execute_plan(capture_id, approval.proposal_id, approval.review_id, approval.sha256, approval.approved)

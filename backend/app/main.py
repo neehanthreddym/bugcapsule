@@ -78,6 +78,8 @@ def create_app(*, capture_store: CaptureStore | None = None) -> FastAPI:
             code = "invalid_preview_settings"
         if request.method == "POST" and request.url.path.endswith("/plan"):
             code = "invalid_plan_request"
+        if request.method == "POST" and request.url.path.endswith("/execute"):
+            code = "invalid_execution_request"
         return error_response(code)
 
     @app.exception_handler(HTTPException)

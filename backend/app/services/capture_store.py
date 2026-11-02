@@ -17,7 +17,7 @@ import time
 from urllib.parse import urlsplit
 
 from app.api.schemas import (
-    CaptureApiError, CaptureSummary, ModelPreview, OriginGroup, PlanningDiagnostics, PreviewMetadata, ProposalReview,
+    CaptureApiError, CaptureSummary, ExecutionReport, ExecutionReviewInfo, ModelPreview, OriginGroup, PlanningDiagnostics, PreviewMetadata, ProposalReview,
     SchemaLabelChoices, SelectionSummary, SkippedEntrySummary, TransactionSummary,
 )
 from app.engine.har import HarSelectionError, select_transactions
@@ -26,10 +26,11 @@ from app.privacy import (
     FailurePattern, PreparedPayload, PrivacyError, available_schema_labels, prepare_model_payload,
 )
 from app.agent.client import Transport
-from app.agent.execution import ExecutionSession
+from app.agent.execution import ExecutionResult, ExecutionSession, PlanReview, approve_execution
 from app.agent.workflow import ValidatedProposal, approve_preview
 from app.config import ConfigError, get_meta_api_key
-from app.services.planning import planning_failure, proposal_review
+from app.services.planning import planning_failure, prepare_execution_review, proposal_review
+from app.services.local_execution import execution_report
 
 
 MAX_CAPTURES = 5
@@ -55,6 +56,11 @@ class _Planning:
     session: ExecutionSession
     proposal: ValidatedProposal | None = None
     proposal_id: str | None = None
+    execution_review: PlanReview | None = None
+    execution_review_info: ExecutionReviewInfo | None = None
+    execution_consumed: bool = False
+    execution_result: ExecutionResult | None = None
+    execution_id: str | None = None
 
 
 @dataclass(repr=False)
@@ -244,7 +250,7 @@ class CaptureStore:
             capture.planning_consumed = True
 
         started = time.perf_counter()
-        failure_code, review, proposal = None, None, None
+        failure_code, review, proposal, local_review = None, None, None, None
         try:
             proposal = session.request_proposal(approve_preview(preview.prepared), api_key=key,
                                                 transport=self._planning_transport)
@@ -252,6 +258,7 @@ class CaptureStore:
                                                latency_ms=max(0, int((time.perf_counter() - started) * 1000)))
             review = proposal_review(proposal, preview.prepared, proposal_id=secrets.token_urlsafe(24),
                                      preview_id=preview_id, sha256=sha256, diagnostics=diagnostics)
+            local_review, review.execution_review = prepare_execution_review(session, review)
         except Exception as error:
             # The API boundary never propagates unexpected transport/provider
             # prose or exception dumps into responses or server tracebacks.
@@ -271,7 +278,60 @@ class CaptureStore:
                 raise CaptureApiError(failure_code, diagnostics=diagnostics)
             reservation.proposal = proposal
             reservation.proposal_id = review.proposal_id
+            reservation.execution_review = local_review
+            reservation.execution_review_info = review.execution_review.model_copy(deep=True)
             return review
+
+    def execute_plan(self, capture_id: str, proposal_id: str, review_id: str, sha256: str,
+                     approved: bool) -> ExecutionReport:
+        """Reserve once, then run the retained session locally outside the lock.
+
+        No model/configuration function is consulted. All authoritative objects
+        come from the planning record, never from browser rules or selectors.
+        Upstream invalidation discards stale results before they can be retained.
+        """
+        with self._lock:
+            capture = self._get(capture_id)
+            if approved is not True:
+                raise CaptureApiError("execution_approval_required")
+            planning = capture.planning
+            if (planning is None or planning.proposal_id != proposal_id or planning.proposal is None
+                    or capture.preview is not planning.preview or capture.entry_ids != planning.preview.entry_ids
+                    or hashlib.sha256(planning.preview.prepared.preview_json.encode("utf-8")).hexdigest() != planning.sha256):
+                raise CaptureApiError("stale_execution_review")
+            info = planning.execution_review_info
+            review = planning.execution_review
+            if info is None or info.status != "ready" or review is None:
+                raise CaptureApiError("execution_blocked")
+            if (info.review_id != review_id or info.sha256 != sha256 or info.attempt != planning.session.attempts
+                    or review.preview_json != info.review_json
+                    or hashlib.sha256(review.preview_json.encode("utf-8")).hexdigest() != sha256):
+                raise CaptureApiError("stale_execution_review")
+            if planning.execution_consumed:
+                raise CaptureApiError("execution_consumed")
+            session = planning.session
+            planning.execution_consumed = True
+
+        try:
+            result = session.execute(approve_execution(review))
+            report = execution_report(result, execution_id=secrets.token_urlsafe(24), proposal_id=proposal_id,
+                                      review_id=review_id, review_sha256=sha256)
+        except Exception:
+            # No captured values, arbitrary exception strings or invented result.
+            raise CaptureApiError("local_execution_failed") from None
+
+        with self._lock:
+            current = self._get(capture_id)
+            if (current is not capture or current.planning is not planning or planning.session is not session
+                    or current.preview is not planning.preview or current.entry_ids != planning.preview.entry_ids
+                    or hashlib.sha256(planning.preview.prepared.preview_json.encode("utf-8")).hexdigest() != planning.sha256
+                    or review.preview_json != info.review_json):
+                session.cancel()
+                raise CaptureApiError("stale_execution_review")
+            # Keep the actual private result, including its process-local seal.
+            planning.execution_result = result
+            planning.execution_id = report.execution_id
+            return report
 
     def delete(self, capture_id: str) -> None:
         with self._lock:

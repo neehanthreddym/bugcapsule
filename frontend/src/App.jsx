@@ -163,7 +163,7 @@ function App() {
   }, [])
   const handlePlanningSubmitted = useCallback(() => {
     setPlanningSubmitted(true)
-    setNotice('Planning was requested. No transformations or verification have run.')
+    setNotice('Planning was requested. Local execution requires separate approval.')
   }, [])
 
   return (

@@ -6,13 +6,16 @@ Check resolution validates configuration only; it never evaluates a failure.
 """
 
 import re
+import hashlib
+import secrets
 
 from app.agent.client import (
     AgentHttpError, AgentIncompleteResponseError, AgentResponseError, AgentTransportError,
 )
 from app.agent.workflow import PlanValidationError, ValidatedProposal
+from app.agent.execution import ExecutionError, ExecutionSession
 from app.api.schemas import (
-    IncompleteDiagnostics, PlanningDiagnostics, ProposalReview, ResolvedReplacement,
+    ExecutionReviewInfo, IncompleteDiagnostics, PlanningDiagnostics, ProposalReview, ResolvedReplacement,
     ReviewCheck, ReviewLocation, ReviewRelationship, ReviewReplacement,
 )
 from app.engine.replace import ArrayItems, ObjectKey
@@ -60,6 +63,27 @@ def proposal_review(proposal: ValidatedProposal, prepared: PreparedPayload, *, p
         resolved_replacements=[ResolvedReplacement(entry_ids=list(rule.entry_ids), target=rule.target,
                                                     path=_path(rule.path), kind=rule.kind) for rule in rules],
         usage=usage, diagnostics=diagnostics,
+    )
+
+
+def prepare_execution_review(session: ExecutionSession, proposal: ProposalReview):
+    """Resolve once through the retained session. Do not grant execution approval."""
+    reason = None
+    if proposal.needs_review:
+        reason = "model_requires_review"
+    elif proposal.check.resolution == "definition_reference_roles_required":
+        reason = "reference_roles_required"
+    elif proposal.check.resolution != "resolved":
+        reason = "unresolved_check"
+    if reason is not None:
+        return None, ExecutionReviewInfo(status="blocked", reason=reason, attempt=session.attempts)
+    try:
+        review = session.review_plan()
+    except ExecutionError:
+        return None, ExecutionReviewInfo(status="blocked", reason="unresolved_check", attempt=session.attempts)
+    return review, ExecutionReviewInfo(
+        status="ready", reason="ready", review_id=secrets.token_urlsafe(24), attempt=session.attempts,
+        sha256=hashlib.sha256(review.preview_json.encode("utf-8")).hexdigest(), review_json=review.preview_json,
     )
 
 

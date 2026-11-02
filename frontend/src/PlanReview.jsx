@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { ApiError, errorMessage, requestModelPlan } from './api.js'
+import ExecutionReview from './ExecutionReview.jsx'
 
 function Diagnostics({ value }) {
   if (!value) return null
@@ -85,7 +86,7 @@ function PlanReview({ captureId, preview, submitted, onSubmitted, onInvalidSelec
       {review && (
         <div className="proposal-details">
           <h3>Validated proposal for human review</h3>
-          <p>Schema validated only. Semantic correctness and failure preservation are unverified.</p>
+          <p>Planning validation alone does not establish semantic correctness or failure preservation. Inspect local verification below after approved execution.</p>
           <p><strong>Model needs review: {review.needs_review ? 'yes' : 'no'}</strong></p>
           {review.review_reason && <p className="model-prose">{review.review_reason}</p>}
           <h4>Replacement proposals</h4>
@@ -106,7 +107,7 @@ function PlanReview({ captureId, preview, submitted, onSubmitted, onInvalidSelec
           <h4>Selected verification check</h4>
           <p>{review.check.type} · {review.check.refs.join(', ')}</p>
           {review.check.note && <p className="model-prose">{review.check.note}</p>}
-          <p>Configuration: {review.check.resolution === 'resolved' ? 'resolved locally; not run'
+          <p>Configuration: {review.check.resolution === 'resolved' ? 'resolved locally; local verification results appear below after execution approval'
             : review.check.resolution === 'definition_reference_roles_required' ? 'explicit definition/reference roles still required'
               : 'invalid configuration; further human review required'}</p>
           <ul>{review.check.locations.map((location) => (
@@ -116,9 +117,11 @@ function PlanReview({ captureId, preview, submitted, onSubmitted, onInvalidSelec
           <Diagnostics value={review.diagnostics} />
           <p>Usage: {['input_tokens', 'output_tokens', 'total_tokens'].filter((key) => Number.isSafeInteger(review.usage[key]))
             .map((key) => `${key}=${review.usage[key]}`).join(' · ') || 'not available'}</p>
+          <ExecutionReview key={`${review.proposal_id}:${review.execution_review?.review_id}:${review.execution_review?.sha256}`}
+            captureId={captureId} proposal={review} onInvalidSelection={onInvalidSelection} />
         </div>
       )}
-      <p>No transformations or verification have run. This step does not execute or export the proposal.</p>
+      <p>Planning alone does not apply transformations or run verification. Local execution requires separate approval. No export is available in this step.</p>
     </section>
   )
 }

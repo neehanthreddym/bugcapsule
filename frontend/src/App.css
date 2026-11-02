@@ -244,3 +244,48 @@ legend {
 .model-prose {
   white-space: pre-wrap;
 }
+
+.execution-review {
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid #cbd5e1;
+}
+
+summary:focus-visible {
+  outline: 3px solid #1d4ed8;
+  outline-offset: 3px;
+}
+
+.execution-result {
+  margin-top: 1rem;
+  padding: 1rem;
+  border: 2px solid #64748b;
+  border-radius: 0.25rem;
+  overflow-wrap: anywhere;
+}
+
+.execution-result[data-outcome='preserved'] { border-color: #15803d; }
+.execution-result[data-outcome='changed'] { border-color: #b45309; }
+.execution-result[data-outcome='inconclusive'] { border-color: #7e22ce; }
+.execution-result[data-outcome='error'] { border-color: #b91c1c; }
+
+.evidence-comparison {
+  display: grid;
+  gap: 1rem;
+}
+
+.evidence-panel {
+  min-width: 0;
+}
+
+.evidence-panel h5,
+.evidence-panel h6 {
+  margin: 1rem 0 0.5rem;
+  font-size: 1rem;
+}
+
+.evidence-panel dd { margin-left: 0; font-weight: 600; }
+
+@media (min-width: 46rem) {
+  .evidence-comparison { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

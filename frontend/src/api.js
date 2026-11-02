@@ -26,6 +26,12 @@ const ERROR_MESSAGES = {
   planning_response_error: 'Meta did not return an acceptable tool response. It was not retried.',
   planning_invalid_proposal: 'The proposed plan failed local validation. It was not retried.',
   planning_failed: 'Planning stopped safely. It was not automatically retried.',
+  execution_approval_required: 'Approve this resolved local execution review separately before running it.',
+  invalid_execution_request: 'The local execution request was rejected. Review the active proposal and execution digest.',
+  stale_execution_review: 'The proposal, review or upstream selection changed. Any stale execution result was discarded.',
+  execution_blocked: 'Local execution is blocked. The proposal, check or explicit identifier roles need review.',
+  execution_consumed: 'This local execution was already submitted. It will not be run again.',
+  local_execution_failed: 'Local execution stopped safely. No additional AI request, automatic retry or export was made.',
   invalid_host: 'The backend accepts loopback hosts only. Use the local development servers.',
   invalid_origin: 'Open the frontend at http://localhost:5173 or http://127.0.0.1:5173.',
   invalid_request: 'The local backend rejected the request. Try again.',
@@ -190,6 +196,7 @@ export async function requestModelPlan(captureId, preview) {
   }, 45_000) // Allow the backend's existing 30-second transport timeout to report safely.
   const refs = (values) => Array.isArray(values) && values.every((ref) => typeof ref === 'string')
   const path = (value) => Array.isArray(value) && value.every((part) => part && (typeof part.key === 'string' || part.each === '*'))
+  const execution = data?.execution_review
   if (status !== 200 || data?.preview_id !== preview.preview_id || data.sha256 !== preview.sha256
     || typeof data.proposal_id !== 'string' || data.validation !== 'schema_validated'
     || data.transformations !== 'not_run' || data.verification !== 'not_run'
@@ -201,8 +208,42 @@ export async function requestModelPlan(captureId, preview) {
     || !Array.isArray(data.check.identity_groups) || !data.check.identity_groups.every(refs)
     || typeof data.needs_review !== 'boolean' || typeof data.review_reason !== 'string'
     || !Array.isArray(data.resolved_replacements) || data.resolved_replacements.some((rule) => !rule || !isIds(rule.entry_ids) || typeof rule.target !== 'string' || typeof rule.kind !== 'string' || !path(rule.path))
-    || !data.usage || typeof data.usage !== 'object') {
+    || !data.usage || typeof data.usage !== 'object'
+    || !execution || !['ready', 'blocked'].includes(execution.status) || !isId(execution.attempt)
+    || (execution.status === 'ready' && (typeof execution.review_id !== 'string' || typeof execution.review_json !== 'string'
+      || typeof execution.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(execution.sha256)))) {
     throw new ApiError('invalid_response')
   }
   return { ...data, diagnostics: safeDiagnostics(data.diagnostics) }
+}
+
+export async function executePlan(captureId, proposal) {
+  const execution = proposal.execution_review
+  const { status, data } = await request(`/api/captures/${encodeURIComponent(captureId)}/execute`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ proposal_id: proposal.proposal_id, review_id: execution.review_id, sha256: execution.sha256, approved: true }),
+  })
+  const location = (value) => value && isId(value.entry_id) && typeof value.target === 'string'
+    && Array.isArray(value.refs) && value.refs.every((ref) => typeof ref === 'string')
+    && Array.isArray(value.record) && value.record.every(isId)
+  const evidence = (value) => value === null || (value && isId(value.observations) && isId(value.failures)
+    && (value.distinct_identities === null || isId(value.distinct_identities))
+    && Array.isArray(value.record_counts) && value.record_counts.every((item) => item && isId(item.count) && location(item.location))
+    && Array.isArray(value.equality_groups) && value.equality_groups.every((group) => Array.isArray(group) && group.every(location))
+    && Array.isArray(value.fields) && value.fields.every((field) => field && location(field.location) && ['missing', 'null', 'present'].includes(field.state))
+    && Array.isArray(value.definition_locations) && value.definition_locations.every(location)
+    && Array.isArray(value.resolutions) && value.resolutions.every((item) => item && location(item.location)
+      && ['resolved', 'dangling'].includes(item.state) && Array.isArray(item.definitions) && item.definitions.every(location)))
+  const verification = data?.verification
+  if (status !== 200 || typeof data?.execution_id !== 'string' || data.proposal_id !== proposal.proposal_id
+    || data.review_id !== execution.review_id || data.review_sha256 !== execution.sha256 || data.attempt !== execution.attempt
+    || !['preserved', 'revision_available', 'review_required', 'stopped', 'cancelled'].includes(data.status)
+    || typeof data.candidate_created !== 'boolean' || typeof data.reason !== 'string'
+    || !Array.isArray(data.limitations) || !data.limitations.every((item) => typeof item === 'string')
+    || (verification !== null && (!verification || !['preserved', 'changed', 'not_present', 'inconclusive'].includes(verification.outcome)
+      || typeof verification.reason !== 'string' || typeof verification.check !== 'string'
+      || !evidence(verification.baseline) || !evidence(verification.transformed)))) {
+    throw new ApiError('invalid_response')
+  }
+  return data
 }
