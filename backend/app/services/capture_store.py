@@ -17,7 +17,7 @@ import time
 from urllib.parse import urlsplit
 
 from app.api.schemas import (
-    CaptureApiError, CaptureSummary, ModelPreview, OriginGroup, PreviewMetadata,
+    CaptureApiError, CaptureSummary, ModelPreview, OriginGroup, PlanningDiagnostics, PreviewMetadata, ProposalReview,
     SchemaLabelChoices, SelectionSummary, SkippedEntrySummary, TransactionSummary,
 )
 from app.engine.har import HarSelectionError, select_transactions
@@ -25,6 +25,11 @@ from app.schemas import ParsedHar
 from app.privacy import (
     FailurePattern, PreparedPayload, PrivacyError, available_schema_labels, prepare_model_payload,
 )
+from app.agent.client import Transport
+from app.agent.execution import ExecutionSession
+from app.agent.workflow import ValidatedProposal, approve_preview
+from app.config import ConfigError, get_meta_api_key
+from app.services.planning import planning_failure, proposal_review
 
 
 MAX_CAPTURES = 5
@@ -44,19 +49,35 @@ class _Preview:
 
 
 @dataclass(repr=False)
+class _Planning:
+    preview: _Preview
+    sha256: str
+    session: ExecutionSession
+    proposal: ValidatedProposal | None = None
+    proposal_id: str | None = None
+
+
+@dataclass(repr=False)
 class _Capture:
     parsed: ParsedHar
     expires_at: float
     entry_ids: tuple[int, ...] = ()
     labels: tuple[str, ...] | None = None
     preview: _Preview | None = None
+    planning: _Planning | None = None
+    # One initial submission per capture, even after failed requests or preview
+    # regeneration. Future revision must use the retained session's budget.
+    planning_consumed: bool = False
 
 
 class CaptureStore:
     """Own private parsed data; methods return independently constructed DTOs."""
 
-    def __init__(self, *, clock: Callable[[], float] = time.monotonic):
+    def __init__(self, *, clock: Callable[[], float] = time.monotonic,
+                 planning_transport: Transport | None = None, key_provider: Callable[[], str] | None = None):
         self._clock = clock
+        self._planning_transport = planning_transport
+        self._key_provider = key_provider if key_provider is not None else get_meta_api_key
         self._captures: dict[str, _Capture] = {}
         self._lock = RLock()
 
@@ -127,6 +148,7 @@ class CaptureStore:
             if next_ids != capture.entry_ids:
                 capture.labels = None
                 capture.preview = None
+                capture.planning = None
             capture.entry_ids = next_ids
             return self._selection(capture)
 
@@ -157,6 +179,7 @@ class CaptureStore:
             capture = self._get(capture_id)
             selected = self._selected(capture)
             capture.preview = None
+            capture.planning = None
             choices = self._labels(capture)
             if (len(set(approved_labels)) != len(approved_labels)
                     or not set(approved_labels) <= set(choices)):
@@ -182,6 +205,73 @@ class CaptureStore:
             )
             capture.preview = _Preview(preview_id, capture.entry_ids, failure_pattern, approved, prepared)
             return result
+
+    def request_plan(self, capture_id: str, preview_id: str, sha256: str, approved: bool) -> ProposalReview:
+        """Reserve once atomically, call the existing session outside the store lock.
+
+        This synchronous method is called by a FastAPI worker thread, not the
+        async event loop. Configuration is checked only after approval/context
+        validation, before reservation or request accounting. Failed attempted
+        requests consume the capture's submission; changing/preparing a preview
+        cannot create another initial request. Stale completions are discarded.
+        """
+        with self._lock:
+            capture = self._get(capture_id)
+            if approved is not True:
+                raise CaptureApiError("approval_required")
+            preview = capture.preview
+            if (preview is None or preview.preview_id != preview_id or preview.entry_ids != capture.entry_ids
+                    or hashlib.sha256(preview.prepared.preview_json.encode("utf-8")).hexdigest() != sha256):
+                raise CaptureApiError("stale_preview")
+            if capture.planning_consumed:
+                session = capture.planning.session if capture.planning is not None else None
+                attempts = session.attempts if session is not None else 1
+                raise CaptureApiError("planning_consumed", diagnostics=PlanningDiagnostics(
+                    attempts=attempts, request_attempted=attempts > 0))
+            try:
+                key = self._key_provider()
+            except ConfigError:
+                raise CaptureApiError("missing_meta_configuration", diagnostics=PlanningDiagnostics()) from None
+            try:
+                session = ExecutionSession.from_prepared(
+                    self._selected(capture), preview.prepared, preview.failure_pattern, approved_labels=preview.approved_labels,
+                )
+            except (ValueError, TypeError, RecursionError):
+                raise CaptureApiError("stale_preview") from None
+            self._get(capture_id)  # Local validation must not revive an expired capture.
+            reservation = _Planning(preview, sha256, session)
+            capture.planning = reservation
+            capture.planning_consumed = True
+
+        started = time.perf_counter()
+        failure_code, review, proposal = None, None, None
+        try:
+            proposal = session.request_proposal(approve_preview(preview.prepared), api_key=key,
+                                                transport=self._planning_transport)
+            diagnostics = PlanningDiagnostics(attempts=session.attempts, request_attempted=session.attempts > 0,
+                                               latency_ms=max(0, int((time.perf_counter() - started) * 1000)))
+            review = proposal_review(proposal, preview.prepared, proposal_id=secrets.token_urlsafe(24),
+                                     preview_id=preview_id, sha256=sha256, diagnostics=diagnostics)
+        except Exception as error:
+            # The API boundary never propagates unexpected transport/provider
+            # prose or exception dumps into responses or server tracebacks.
+            diagnostics = PlanningDiagnostics(attempts=session.attempts, request_attempted=session.attempts > 0,
+                                               latency_ms=max(0, int((time.perf_counter() - started) * 1000)))
+            failure_code = planning_failure(error, diagnostics)
+
+        with self._lock:
+            current = self._get(capture_id)
+            if (current is not capture or current.preview is not preview or current.planning is not reservation
+                    or current.entry_ids != preview.entry_ids
+                    or hashlib.sha256(preview.prepared.preview_json.encode("utf-8")).hexdigest() != sha256):
+                session.cancel()
+                raise CaptureApiError("stale_preview", diagnostics=diagnostics)
+            if failure_code is not None:
+                session.cancel()
+                raise CaptureApiError(failure_code, diagnostics=diagnostics)
+            reservation.proposal = proposal
+            reservation.proposal_id = review.proposal_id
+            return review
 
     def delete(self, capture_id: str) -> None:
         with self._lock:

@@ -229,3 +229,18 @@ legend {
   overflow-wrap: anywhere;
   user-select: text;
 }
+
+.plan-review {
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid #cbd5e1;
+}
+
+.proposal-details,
+.planning-diagnostics {
+  overflow-wrap: anywhere;
+}
+
+.model-prose {
+  white-space: pre-wrap;
+}

@@ -14,6 +14,7 @@ function App() {
   const [captureError, setCaptureError] = useState('')
   const [notice, setNotice] = useState('')
   const [expired, setExpired] = useState(false)
+  const [planningSubmitted, setPlanningSubmitted] = useState(false)
   const fileInput = useRef(null)
   const pending = useRef(false)
   const version = useRef(0)
@@ -66,6 +67,7 @@ function App() {
         return
       }
       setCapture(imported)
+      setPlanningSubmitted(false)
       setOrigin(imported.origin_groups[0]?.origin ?? '')
       setDraft([])
       setConfirmed(null)
@@ -119,6 +121,7 @@ function App() {
 
   function resetCapture(message) {
     setCapture(null)
+    setPlanningSubmitted(false)
     setOrigin('')
     setDraft([])
     setConfirmed(null)
@@ -157,6 +160,10 @@ function App() {
     setConfirmed(null)
     setCaptureError(errorMessage(error))
     if (error.code === 'capture_not_found') setExpired(true)
+  }, [])
+  const handlePlanningSubmitted = useCallback(() => {
+    setPlanningSubmitted(true)
+    setNotice('Planning was requested. No transformations or verification have run.')
   }, [])
 
   return (
@@ -264,7 +271,8 @@ function App() {
       )}
       {capture && confirmed && !busy && !expired && (
         <ModelPreview key={`${capture.capture_id}:${confirmed.entry_ids.join(',')}`}
-          captureId={capture.capture_id} onInvalidSelection={handleInvalidPreviewSelection} />
+          captureId={capture.capture_id} onInvalidSelection={handleInvalidPreviewSelection}
+          planningSubmitted={planningSubmitted} onPlanningSubmitted={handlePlanningSubmitted} />
       )}
     </main>
   )

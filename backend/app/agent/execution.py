@@ -150,6 +150,22 @@ class ExecutionSession:
         self._frozen_refs = ()
         self._result = None
 
+    @classmethod
+    def from_prepared(cls, transactions: Sequence[HarTransaction], prepared: PreparedPayload,
+                      failure_pattern: FailurePattern, *, approved_labels: frozenset[str] = frozenset()):
+        """Adopt an exact retained preview after validating its local context.
+
+        Rebuilding through the existing boundary checks the selection/settings;
+        the retained object, string and bindings are then used for approval and
+        planning. This performs no request, execution or approval by itself.
+        """
+        session = cls(transactions, failure_pattern, approved_labels=approved_labels)
+        if not isinstance(prepared, PreparedPayload) or prepared.preview_json != session.prepared.preview_json:
+            raise ExecutionError("Retained preview does not match its local context.")
+        session._initial = prepared
+        session._prepared = prepared
+        return session
+
     @property
     def prepared(self) -> PreparedPayload:
         return self._prepared

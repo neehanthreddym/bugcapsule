@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { ApiError, errorMessage, fetchSchemaLabels, prepareModelPreview } from './api.js'
+import PlanReview from './PlanReview.jsx'
 
 const PATTERNS = [
   ['duplicate_pagination', 'Duplicate pagination records'],
@@ -7,7 +8,7 @@ const PATTERNS = [
   ['inconsistent_identifier_references', 'Inconsistent identifier references'],
 ]
 
-function ModelPreview({ captureId, onInvalidSelection }) {
+function ModelPreview({ captureId, onInvalidSelection, planningSubmitted, onPlanningSubmitted }) {
   const [choices, setChoices] = useState({ labels: [], loading: true, error: '' })
   const [pattern, setPattern] = useState('')
   const [approved, setApproved] = useState([])
@@ -138,14 +139,15 @@ function ModelPreview({ captureId, onInvalidSelection }) {
       </form>
       <p className="helper-text">
         Preparation is local. Schema structure and approved labels can reveal context; pseudonymization
-        does not guarantee anonymization. No AI request has been made. Preparing grants no send or execution approval.
+        does not guarantee anonymization. Preparing grants no send or execution approval.
+        {' '}{planningSubmitted ? 'Planning was requested; see its diagnostics for whether a model request was attempted.' : 'No AI request has been made.'}
       </p>
       {preparing && <p role="status">Preparing the exact model payload locally…</p>}
       {error && <p className="error-message" role="alert">{error}</p>}
       {preview && (
         <div>
           <h3>Exact model payload preview</h3>
-          <p role="status">Prepared locally · {preview.byte_count} UTF-8 bytes · No AI request made</p>
+          <p role="status">Prepared locally · {preview.byte_count} UTF-8 bytes</p>
           <p className="preview-digest">SHA-256: <code>{preview.sha256}</code></p>
           <p>{preview.metadata.examples_truncated ? 'Examples were limited.' : 'No examples were omitted.'}
             {' '}Omitted examples: {preview.metadata.examples_omitted}.
@@ -154,6 +156,8 @@ function ModelPreview({ captureId, onInvalidSelection }) {
           <pre className="model-preview-text" tabIndex={0} role="region" aria-label="Exact model payload preview">
             {preview.preview_json}
           </pre>
+          <PlanReview key={preview.preview_id} captureId={captureId} preview={preview} submitted={planningSubmitted}
+            onSubmitted={onPlanningSubmitted} onInvalidSelection={onInvalidSelection} />
         </div>
       )}
     </section>
